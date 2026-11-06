@@ -2,7 +2,7 @@ import * as AuthSession from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useState } from 'react';
-import { AUTHORITY, CLIENT_ID, SCOPES, URL_SCHEME } from './config';
+import { AUTHORITY, SCOPES, URL_SCHEME } from './config';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -11,6 +11,8 @@ const REFRESH_KEY = 'ms_refresh_token';
 type Tokens = { accessToken: string; expiresAt: number; refreshToken?: string };
 
 let current: Tokens | null = null;
+/** Set from onboarding storage before any token call. */
+let clientId = '';
 let discoveryCache: AuthSession.DiscoveryDocument | null = null;
 
 export const redirectUri = AuthSession.makeRedirectUri({ scheme: URL_SCHEME, path: 'auth' });
@@ -28,7 +30,7 @@ async function refresh(refreshToken: string): Promise<boolean> {
   if (!discoveryCache) discoveryCache = await AuthSession.fetchDiscoveryAsync(AUTHORITY);
   try {
     const res = await AuthSession.refreshAsync(
-      { clientId: CLIENT_ID, refreshToken, scopes: SCOPES },
+      { clientId, refreshToken, scopes: SCOPES },
       discoveryCache,
     );
     store(res);
@@ -42,7 +44,7 @@ async function refresh(refreshToken: string): Promise<boolean> {
 export async function getAccessToken(): Promise<string> {
   if (current && current.expiresAt - 60_000 > Date.now()) return current.accessToken;
   const rt = current?.refreshToken ?? (await SecureStore.getItemAsync(REFRESH_KEY));
-  if (rt && (await refresh(rt))) return current!.accessToken;
+  if (clientId && rt && (await refresh(rt))) return current!.accessToken;
   throw new Error('Not signed in');
 }
 
@@ -52,13 +54,14 @@ export async function signOut() {
 }
 
 /** Sign-in hook: PKCE authorisation-code flow, no client secret. */
-export function useMicrosoftSignIn() {
+export function useMicrosoftSignIn(appClientId: string) {
+  clientId = appClientId;
   const discovery = AuthSession.useAutoDiscovery(AUTHORITY);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    { clientId: CLIENT_ID, scopes: SCOPES, redirectUri, usePKCE: true },
+    { clientId: appClientId, scopes: SCOPES, redirectUri, usePKCE: true },
     discovery,
   );
 
@@ -76,7 +79,7 @@ export function useMicrosoftSignIn() {
     if (response?.type !== 'success' || !discovery || !request?.codeVerifier) return;
     AuthSession.exchangeCodeAsync(
       {
-        clientId: CLIENT_ID,
+        clientId: appClientId,
         code: response.params.code,
         redirectUri,
         extraParams: { code_verifier: request.codeVerifier },

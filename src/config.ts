@@ -1,9 +1,7 @@
 /**
- * Phase 1 spike configuration. Edit these before the first run.
+ * App-wide constants. Nothing account-specific lives here: the Entra client ID
+ * is entered on the phone during onboarding and kept in SecureStore.
  */
-
-/** Application (client) ID from your Entra app registration (public client, personal Microsoft accounts). */
-export const CLIENT_ID = 'REPLACE-WITH-YOUR-CLIENT-ID';
 
 /** URL scheme registered in app.json. The redirect URI to add in Entra is `swipesorter://auth`. */
 export const URL_SCHEME = 'swipesorter';

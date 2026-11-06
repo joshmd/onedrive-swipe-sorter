@@ -2,7 +2,7 @@
 
 Swipe through your OneDrive Camera Roll and file photos into folders. This is the Phase 1 spike from the feasibility brief. It signs in, lists Camera Roll (loose files plus Year > Month subfolders), shows one thumbnail at a time, and moves the photo to one hard-coded folder when you swipe right. Any other swipe springs back.
 
-No backend. Tokens stay on the device in SecureStore. Photos only pass between the phone and Microsoft.
+No backend. The client ID and tokens stay on the device in SecureStore. Photos only pass between the phone and Microsoft.
 
 ## One-off setup
 
@@ -12,7 +12,7 @@ No backend. Tokens stay on the device in SecureStore. Photos only pass between t
    - Platform: *Mobile and desktop applications*, redirect URI `swipesorter://auth`.
    - API permissions: Microsoft Graph, delegated: `Files.ReadWrite`, `User.Read`, `offline_access`.
    - Leave *Allow public client flows* on. No client secret is needed.
-3. Put the Application (client) ID in `src/config.ts` as `CLIENT_ID`.
+3. Copy the Application (client) ID. You paste it into the app on first launch. It is stored in SecureStore on the phone and never goes into the repo. "Change app registration" on the sign-in screen clears it, along with the saved sign-in.
 4. Create the test folder in OneDrive: `Pictures/Swipe Sorter Test` (or change `TARGET_FOLDER_PATH`).
 
 ## Run on the Pixel
