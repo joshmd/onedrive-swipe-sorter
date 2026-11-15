@@ -28,6 +28,11 @@
       "expo-secure-store",
       "expo-image"
     ],
-    "scheme": "swipesorter"
+    "scheme": "swipesorter",
+    "extra": {
+      "eas": {
+        "projectId": "eac5525d-08a7-4df1-9398-760b59dcc511"
+      }
+    }
   }
 }
