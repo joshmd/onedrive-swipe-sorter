@@ -11,19 +11,25 @@ No backend. The client ID and tokens stay on the device in SecureStore. Photos o
    - Supported account types: *Personal Microsoft accounts only*.
    - Platform: *Mobile and desktop applications*, redirect URI `swipesorter://auth`.
    - API permissions: Microsoft Graph, delegated: `Files.ReadWrite`, `User.Read`, `offline_access`.
-   - Leave *Allow public client flows* on. No client secret is needed.
+   - No client secret is needed. *Allow public client flows* can stay off.
 3. Copy the Application (client) ID. You paste it into the app on first launch. It is stored in SecureStore on the phone and never goes into the repo. "Change app registration" on the sign-in screen clears it, along with the saved sign-in.
 4. Create the test folder in OneDrive: `Pictures/Swipe Sorter Test` (or change `TARGET_FOLDER_PATH`).
 
 ## Run on the Pixel
 
-The custom `swipesorter://` redirect needs a development build. Expo Go won't do.
+Easiest: a cloud build with EAS, which gives you an APK to install. No Android SDK needed.
 
 ```bash
 npm install
-npx expo run:android        # USB/ADB install to the Pixel (needs Android SDK)
-# or: npx eas-cli@latest build --profile development --platform android
+npx eas-cli@latest login                                     # free Expo account
+npx eas-cli@latest build --platform android --profile preview
 ```
+
+The first run asks to create an EAS project and a signing keystore. Accept both. When the build finishes, open the link it prints on the Pixel, download the APK and install it. Android asks you to allow installs from your browser first.
+
+Alternative with the Android SDK installed: `npx expo run:android` with the phone on USB.
+
+The custom `swipesorter://` redirect needs a real build. Expo Go won't work.
 
 ## Checks
 
