@@ -2,9 +2,10 @@
 
 Swipe through your OneDrive Camera Roll and file photos into folders. It scans Camera Roll (loose files plus Year > Month subfolders) and shows one photo at a time.
 
-- **Four-way swipe map.** In settings (⚙), set each direction to *move to a folder*, *skip*, or *nothing*. Folders are picked by browsing or searching under Pictures. Camera Roll is never offered.
+- **Four-way swipe map.** In settings (⚙), set each direction to *move to a folder*, *skip*, *delete* or *nothing*. Folders are picked by browsing or searching under Pictures. Camera Roll is never offered.
 - **Undo** reverses the last 10 actions. A move is undone by moving the file back to where it came from.
 - **Skip** (button, or a swipe set to skip) sends the photo to the back of this session's queue.
+- **Delete** sends the file to the OneDrive recycle bin, but only once it can't be undone any more: when it drops off the undo list, when the app goes to the background, on rescan or on sign-out. Undo just cancels it, so the app never needs `Files.ReadWrite.All`, which recycle-bin restore would require. Pending deletes are saved on the phone and finished at next launch if the app was killed.
 
 No backend. The client ID and tokens stay on the device in SecureStore. Photos only pass between the phone and Microsoft.
 
@@ -54,4 +55,4 @@ Sort 100 real photos with no wrong moves, and see no re-uploads into Camera Roll
 
 ## Next
 
-Pinned and recent folders in the picker, delta sync, a rename rule for name clashes, delete with recycle-bin restore, reminders and a session summary.
+Pinned and recent folders in the picker, delta sync, a rename rule for name clashes, reminders and a session summary.

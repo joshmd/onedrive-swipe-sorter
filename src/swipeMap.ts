@@ -8,6 +8,7 @@ export type Folder = { id: string; name: string; path: string };
 export type SwipeAction =
   | { type: 'move'; folder: Folder }
   | { type: 'skip' }
+  | { type: 'delete' }
   | { type: 'none' };
 
 export type SwipeMap = Record<Direction, SwipeAction>;
@@ -31,6 +32,7 @@ const KEY = 'swipe_map_v1';
 export function actionLabel(a: SwipeAction): string {
   if (a.type === 'move') return a.folder.name;
   if (a.type === 'skip') return 'Skip';
+  if (a.type === 'delete') return 'Delete';
   return '';
 }
 

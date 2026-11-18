@@ -16,6 +16,7 @@ const NAMES: Record<Direction, string> = { left: '◀ Left', right: 'Right ▶',
 function describe(a: SwipeAction): string {
   if (a.type === 'move') return `Move to ${a.folder.path}`;
   if (a.type === 'skip') return 'Skip for later';
+  if (a.type === 'delete') return 'Delete (to OneDrive recycle bin)';
   return 'Nothing';
 }
 
@@ -51,11 +52,12 @@ export function SettingsScreen({ map, excludeId, onChange, onClose, onSignOut }:
           <View style={styles.choices}>
             <Chip label="Choose folder…" onPress={() => setPicking(dir)} selected={map[dir].type === 'move'} />
             <Chip label="Skip" onPress={() => set(dir, { type: 'skip' })} selected={map[dir].type === 'skip'} />
+            <Chip label="Delete" onPress={() => set(dir, { type: 'delete' })} selected={map[dir].type === 'delete'} />
             <Chip label="Nothing" onPress={() => set(dir, { type: 'none' })} selected={map[dir].type === 'none'} />
           </View>
         </View>
       ))}
-      <Text style={styles.note}>Folders are under Pictures. Camera Roll is never offered as a destination.</Text>
+      <Text style={styles.note}>Folders are under Pictures. Camera Roll is never offered as a destination. Deletes are sent once they drop off the undo list or you leave the app, and go to the OneDrive recycle bin.</Text>
       <Pressable onPress={onSignOut} style={{ marginTop: 24 }}>
         <Text style={styles.dim}>Sign out</Text>
       </Pressable>

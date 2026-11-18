@@ -1,12 +1,13 @@
 import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { redirectUri, signOut, useMicrosoftSignIn } from './src/auth';
 import { clearClientId, getClientId, isValidClientId, setClientId } from './src/settings';
 import { GraphError, listCameraRoll, moveItem, type Photo } from './src/graph';
+import { addPendingDelete, cancelPendingDelete, commitDelete, flushPendingDeletes, getPendingDeletes } from './src/pendingDeletes';
 import { SettingsScreen } from './src/SettingsScreen';
 import { DIRECTIONS, loadSwipeMap, saveSwipeMap, type Direction, type Folder, type SwipeMap } from './src/swipeMap';
 import { SwipeCard } from './src/SwipeCard';
@@ -107,8 +108,8 @@ function SignedInGate({ clientId, onReset }: { clientId: string; onReset: () => 
 type UndoEntry = {
   id: number;
   photo: Photo;
-  kind: 'move' | 'skip';
-  /** Resolves true once the move has succeeded on the server. */
+  kind: 'move' | 'skip' | 'delete';
+  /** Resolves true once a move has succeeded on the server. */
   done: Promise<boolean>;
 };
 
@@ -123,31 +124,74 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moved, setMoved] = useState(0);
+  const [deleted, setDeleted] = useState(0);
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const historyRef = useRef<UndoEntry[]>([]);
+  const rootRef = useRef('');
   const nextId = useRef(1);
+
+  const setHist = (h: UndoEntry[]) => {
+    historyRef.current = h;
+    setHistory(h);
+  };
+
+  const sendDelete = (photo: Photo) => {
+    commitDelete(photo.id, rootRef.current).catch((e) =>
+      setError(`Delete of ${photo.name} failed, will retry later: ${String(e)}`),
+    );
+  };
+
+  /** Sends all pending deletes. They stop being undoable. */
+  const flushDeletes = useCallback(async () => {
+    if (!rootRef.current) return;
+    setHist(historyRef.current.filter((e) => e.kind !== 'delete'));
+    const failed = await flushPendingDeletes(rootRef.current);
+    if (failed) setError(`${failed} delete(s) failed and will be retried next time.`);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      await flushDeletes();
       const [roll, saved] = await Promise.all([listCameraRoll(), loadSwipeMap()]);
+      rootRef.current = roll.rootId;
       setRootId(roll.rootId);
-      setQueue(roll.photos);
+      // Covers a killed app: anything still pending from last time is hidden,
+      // then its delete is sent.
+      const pending = await getPendingDeletes();
+      setQueue(roll.photos.filter((p) => !pending.has(p.id)));
+      const failed = await flushPendingDeletes(roll.rootId);
+      if (failed) setError(`${failed} delete(s) failed and will be retried next time.`);
       setMap(saved);
-      setHistory([]);
+      setHist([]);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [flushDeletes]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const record = (entry: UndoEntry) => setHistory((h) => [...h, entry].slice(-UNDO_LIMIT));
+  // Leaving the app commits pending deletes.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') flushDeletes();
+    });
+    return () => sub.remove();
+  }, [flushDeletes]);
+
+  const record = (entry: UndoEntry) => {
+    const all = [...historyRef.current, entry];
+    const evicted = all.slice(0, Math.max(0, all.length - UNDO_LIMIT));
+    setHist(all.slice(-UNDO_LIMIT));
+    // A delete that can no longer be undone is sent now.
+    for (const e of evicted) if (e.kind === 'delete') sendDelete(e.photo);
+  };
 
   const skip = useCallback(() => {
     const [photo, ...rest] = queueRef.current;
@@ -155,6 +199,15 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
     // Skipped photos go to the back of this session's queue.
     setQueue([...rest, photo]);
     record({ id: nextId.current++, photo, kind: 'skip', done: Promise.resolve(true) });
+  }, []);
+
+  const remove = useCallback(() => {
+    const [photo, ...rest] = queueRef.current;
+    if (!photo) return;
+    setQueue(rest);
+    setDeleted((d) => d + 1);
+    addPendingDelete(photo.id).catch((e) => setError(`Could not queue delete: ${String(e)}`));
+    record({ id: nextId.current++, photo, kind: 'delete', done: Promise.resolve(true) });
   }, []);
 
   const move = useCallback(
@@ -171,7 +224,7 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
         (e) => {
           // Put it back at the front so nothing silently disappears from the queue.
           setQueue((q) => [photo, ...q]);
-          setHistory((h) => h.filter((x) => x.id !== id));
+          setHist(historyRef.current.filter((x) => x.id !== id));
           setError(
             e instanceof GraphError && e.code === 'nameAlreadyExists'
               ? `${photo.name} already exists in ${folder.name}. Not moved.`
@@ -190,22 +243,23 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
       const action = map?.[dir];
       if (action?.type === 'move') move(action.folder);
       else if (action?.type === 'skip') skip();
+      else if (action?.type === 'delete') remove();
     },
-    [map, move, skip],
+    [map, move, skip, remove],
   );
 
   const undoBusy = useRef(false);
   const undo = useCallback(async () => {
-    const entry = history[history.length - 1];
+    const entry = historyRef.current[historyRef.current.length - 1];
     if (!entry || undoBusy.current) return;
     undoBusy.current = true;
-    setHistory((h) => h.slice(0, -1));
+    setHist(historyRef.current.slice(0, -1));
     try {
       await undoEntry(entry);
     } finally {
       undoBusy.current = false;
     }
-  }, [history, rootId]);
+  }, [rootId]);
 
   const undoEntry = async (entry: UndoEntry) => {
     if (entry.kind === 'skip') {
@@ -214,6 +268,13 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
         const without = i >= 0 ? [...q.slice(0, i), ...q.slice(i + 1)] : q;
         return [entry.photo, ...without];
       });
+      return;
+    }
+    if (entry.kind === 'delete') {
+      // Not sent yet, so undo only has to cancel it.
+      await cancelPendingDelete(entry.photo.id);
+      setDeleted((d) => d - 1);
+      setQueue((q) => [entry.photo, ...q]);
       return;
     }
     // Wait for the original move to finish, then move the file back to where it came from.
@@ -232,6 +293,11 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
     saveSwipeMap(m).catch((e) => setError(`Could not save settings: ${String(e)}`));
   }, []);
 
+  const signOutSafely = useCallback(async () => {
+    await flushDeletes();
+    onSignOut();
+  }, [flushDeletes, onSignOut]);
+
   if (loading || !map)
     return (
       <Centre>
@@ -249,18 +315,18 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
         excludeId={rootId}
         onChange={changeMap}
         onClose={() => setSettingsOpen(false)}
-        onSignOut={onSignOut}
+        onSignOut={signOutSafely}
       />
     );
 
   const current = queue[0];
-  const nothingMapped = DIRECTIONS.every((d) => map[d].type !== 'move');
+  const nothingMapped = DIRECTIONS.every((d) => map[d].type === 'none' || map[d].type === 'skip');
 
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.header}>
         <Text style={styles.headerText}>
-          Camera Roll · {queue.length} left · {moved} moved
+          Camera Roll · {queue.length} left · {moved} moved · {deleted} deleted
         </Text>
         <Pressable onPress={() => setSettingsOpen(true)} hitSlop={12}>
           <Text style={styles.gear}>⚙</Text>
@@ -273,7 +339,7 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
       )}
       {nothingMapped && (
         <Pressable onPress={() => setSettingsOpen(true)}>
-          <Text style={styles.hint}>No folders set yet. Tap here to choose a folder for each swipe direction.</Text>
+          <Text style={styles.hint}>No folders or delete set yet. Tap here to choose a folder for each swipe direction.</Text>
         </Pressable>
       )}
       {current ? (
@@ -287,7 +353,9 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
       ) : (
         <Centre>
           <Text style={styles.title}>All done</Text>
-          <Text style={styles.dim}>{moved} moved this session</Text>
+          <Text style={styles.dim}>
+            {moved} moved · {deleted} deleted this session
+          </Text>
           <Button label="Rescan" onPress={load} />
         </Centre>
       )}

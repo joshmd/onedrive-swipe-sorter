@@ -140,3 +140,17 @@ export async function searchFolders(query: string, picturesPath: string): Promis
     .map(toFolder)
     .filter((f: Folder) => f.path.startsWith(picturesPath + '/'));
 }
+
+/**
+ * Deletes a single file. On personal OneDrive it goes to the recycle bin.
+ * Already gone (404) counts as success.
+ */
+export async function deleteItem(itemId: string, cameraRollId: string): Promise<void> {
+  if (!cameraRollId || itemId === cameraRollId) throw new Error('Refusing to delete the Camera Roll folder itself');
+  try {
+    await graph(`/me/drive/items/${itemId}`, { method: 'DELETE' });
+  } catch (e) {
+    if (e instanceof GraphError && e.status === 404) return;
+    throw e;
+  }
+}
