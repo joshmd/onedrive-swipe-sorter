@@ -1,0 +1,36 @@
+name: Build Android APK
+
+# Manual only: Actions tab → "Build Android APK" → Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check EXPO_TOKEN is set
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::Add an Expo access token as the repository secret EXPO_TOKEN (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+
+      # Runs in Expo's cloud with the keystore already stored there.
+      # The APK download link is printed at the end of this step's log.
+      - name: Build APK on EAS
+        run: eas build --platform android --profile preview --non-interactive

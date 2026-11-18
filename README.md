@@ -22,6 +22,14 @@ No backend. The client ID and tokens stay on the device in SecureStore. Photos o
 
 ## Run on the Pixel
 
+### From GitHub (no PC needed)
+
+One-off: create an access token at expo.dev (account settings → Access tokens) and save it in this repo under Settings → Secrets and variables → Actions as `EXPO_TOKEN`.
+
+Then: Actions tab → **Build Android APK** → **Run workflow**. When it finishes, the APK link is at the end of the "Build APK on EAS" step's log, and the build also shows on expo.dev. Open it on the Pixel and install over the existing app.
+
+### From a PC
+
 Easiest: a cloud build with EAS, which gives you an APK to install. No Android SDK needed.
 
 ```bash
