@@ -1,0 +1,86 @@
+import { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FolderPicker } from './FolderPicker';
+import { COLOURS, DIRECTIONS, type Direction, type SwipeAction, type SwipeMap } from './swipeMap';
+
+type Props = {
+  map: SwipeMap;
+  excludeId?: string;
+  onChange: (map: SwipeMap) => void;
+  onClose: () => void;
+  onSignOut: () => void;
+};
+
+const NAMES: Record<Direction, string> = { left: '◀ Left', right: 'Right ▶', up: '▲ Up', down: '▼ Down' };
+
+function describe(a: SwipeAction): string {
+  if (a.type === 'move') return `Move to ${a.folder.path}`;
+  if (a.type === 'skip') return 'Skip for later';
+  return 'Nothing';
+}
+
+export function SettingsScreen({ map, excludeId, onChange, onClose, onSignOut }: Props) {
+  const [picking, setPicking] = useState<Direction | null>(null);
+
+  if (picking)
+    return (
+      <FolderPicker
+        excludeId={excludeId}
+        onCancel={() => setPicking(null)}
+        onPick={(folder) => {
+          onChange({ ...map, [picking]: { type: 'move', folder } });
+          setPicking(null);
+        }}
+      />
+    );
+
+  const set = (dir: Direction, action: SwipeAction) => onChange({ ...map, [dir]: action });
+
+  return (
+    <ScrollView contentContainerStyle={styles.screen}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Swipe settings</Text>
+        <Pressable onPress={onClose}>
+          <Text style={styles.link}>Done</Text>
+        </Pressable>
+      </View>
+      {DIRECTIONS.map((dir) => (
+        <View key={dir} style={[styles.card, { borderLeftColor: COLOURS[dir] }]}>
+          <Text style={styles.dir}>{NAMES[dir]}</Text>
+          <Text style={styles.current}>{describe(map[dir])}</Text>
+          <View style={styles.choices}>
+            <Chip label="Choose folder…" onPress={() => setPicking(dir)} selected={map[dir].type === 'move'} />
+            <Chip label="Skip" onPress={() => set(dir, { type: 'skip' })} selected={map[dir].type === 'skip'} />
+            <Chip label="Nothing" onPress={() => set(dir, { type: 'none' })} selected={map[dir].type === 'none'} />
+          </View>
+        </View>
+      ))}
+      <Text style={styles.note}>Folders are under Pictures. Camera Roll is never offered as a destination.</Text>
+      <Pressable onPress={onSignOut} style={{ marginTop: 24 }}>
+        <Text style={styles.dim}>Sign out</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+const Chip = ({ label, onPress, selected }: { label: string; onPress: () => void; selected: boolean }) => (
+  <Pressable onPress={onPress} style={[styles.chip, selected && styles.chipOn]}>
+    <Text style={styles.chipText}>{label}</Text>
+  </Pressable>
+);
+
+const styles = StyleSheet.create({
+  screen: { padding: 16, gap: 12 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  title: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  link: { color: '#4fc3f7', fontSize: 16 },
+  card: { backgroundColor: '#151515', borderRadius: 10, padding: 12, borderLeftWidth: 5, gap: 6 },
+  dir: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  current: { color: '#bbb' },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: '#2a2a2a' },
+  chipOn: { backgroundColor: '#0078d4' },
+  chipText: { color: '#fff' },
+  note: { color: '#777', fontSize: 12, marginTop: 8 },
+  dim: { color: '#999' },
+});

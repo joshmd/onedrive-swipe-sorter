@@ -10,23 +10,32 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import type { Photo } from './graph';
+import { actionLabel, COLOURS, type Direction, type SwipeMap } from './swipeMap';
 
 type Props = {
   photo: Photo;
-  targetLabel: string;
-  /** Called after the card has flown off to the right. */
-  onSwipeRight: () => void;
+  map: SwipeMap;
+  /** Called after the card has flown off in that direction. */
+  onSwipe: (direction: Direction) => void;
 };
 
 /**
- * Phase 1: only a right swipe commits (move to the hard-coded folder).
- * Any other release springs back. The label grows as you drag towards it.
+ * Four-way swipe. A direction mapped to "nothing" springs back.
+ * The label on the edge you drag towards grows as you approach the threshold.
  */
-export function SwipeCard({ photo, targetLabel, onSwipeRight }: Props) {
-  const { width } = useWindowDimensions();
-  const threshold = width * 0.3;
+export function SwipeCard({ photo, map, onSwipe }: Props) {
+  const { width, height } = useWindowDimensions();
+  const hThreshold = width * 0.3;
+  const vThreshold = height * 0.18;
   const x = useSharedValue(0);
   const y = useSharedValue(0);
+
+  const active = {
+    left: map.left.type !== 'none',
+    right: map.right.type !== 'none',
+    up: map.up.type !== 'none',
+    down: map.down.type !== 'none',
+  };
 
   const pan = usePanGesture({
     onUpdate: (e) => {
@@ -36,11 +45,23 @@ export function SwipeCard({ photo, targetLabel, onSwipeRight }: Props) {
     },
     onDeactivate: (e) => {
       'worklet';
-      if (e.translationX > threshold || e.velocityX > 1200) {
-        x.value = withTiming(width * 1.5, { duration: 180 }, (done) => {
-          if (done) scheduleOnRN(onSwipeRight);
+      const horizontal = Math.abs(e.translationX) > Math.abs(e.translationY);
+      let dir: Direction | null = null;
+      if (horizontal) {
+        if (e.translationX > hThreshold || e.velocityX > 1200) dir = 'right';
+        else if (e.translationX < -hThreshold || e.velocityX < -1200) dir = 'left';
+      } else {
+        if (e.translationY > vThreshold || e.velocityY > 1200) dir = 'down';
+        else if (e.translationY < -vThreshold || e.velocityY < -1200) dir = 'up';
+      }
+      if (dir && active[dir]) {
+        const d = dir;
+        const tx = d === 'right' ? width * 1.5 : d === 'left' ? -width * 1.5 : 0;
+        const ty = d === 'down' ? height * 1.2 : d === 'up' ? -height * 1.2 : 0;
+        x.value = withTiming(tx, { duration: 180 });
+        y.value = withTiming(ty, { duration: 180 }, (done) => {
+          if (done) scheduleOnRN(onSwipe, d);
         });
-        y.value = withTiming(0);
       } else {
         x.value = withSpring(0);
         y.value = withSpring(0);
@@ -56,16 +77,27 @@ export function SwipeCard({ photo, targetLabel, onSwipeRight }: Props) {
     ],
   }));
 
-  const rightLabel = useAnimatedStyle(() => {
-    const p = interpolate(x.value, [0, threshold], [0, 1], 'clamp');
-    return { opacity: p, transform: [{ scale: 0.8 + p * 0.5 }] };
-  });
+  const grow = (p: number) => ({ opacity: 0.25 + p * 0.75, transform: [{ scale: 0.85 + p * 0.45 }] });
+  const rightStyle = useAnimatedStyle(() => grow(interpolate(x.value, [0, hThreshold], [0, 1], 'clamp')));
+  const leftStyle = useAnimatedStyle(() => grow(interpolate(x.value, [-hThreshold, 0], [1, 0], 'clamp')));
+  const downStyle = useAnimatedStyle(() => grow(interpolate(y.value, [0, vThreshold], [0, 1], 'clamp')));
+  const upStyle = useAnimatedStyle(() => grow(interpolate(y.value, [-vThreshold, 0], [1, 0], 'clamp')));
+
+  const edge = (dir: Direction, style: object, pos: object, arrow: string) =>
+    active[dir] && (
+      <Animated.View style={[styles.edge, pos, { backgroundColor: COLOURS[dir] }, style]}>
+        <Text style={styles.edgeText} numberOfLines={1}>
+          {dir === 'left' || dir === 'up' ? `${arrow} ${actionLabel(map[dir])}` : `${actionLabel(map[dir])} ${arrow}`}
+        </Text>
+      </Animated.View>
+    );
 
   return (
     <View style={styles.wrap}>
-      <Animated.View style={[styles.edge, styles.right, rightLabel]}>
-        <Text style={styles.edgeText}>{targetLabel} ▶</Text>
-      </Animated.View>
+      {edge('left', leftStyle, styles.left, '◀')}
+      {edge('right', rightStyle, styles.right, '▶')}
+      {edge('up', upStyle, styles.up, '▲')}
+      {edge('down', downStyle, styles.down, '▼')}
       <GestureDetector gesture={pan}>
         <Animated.View style={[styles.card, cardStyle]}>
           {photo.thumbnailUrl ? (
@@ -83,8 +115,8 @@ export function SwipeCard({ photo, targetLabel, onSwipeRight }: Props) {
 const styles = StyleSheet.create({
   wrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: {
-    width: '90%',
-    height: '80%',
+    width: '78%',
+    height: '74%',
     borderRadius: 16,
     backgroundColor: '#111',
     overflow: 'hidden',
@@ -103,7 +135,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
   },
-  edge: { position: 'absolute', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
-  right: { right: 8, backgroundColor: '#2e7d32' },
-  edgeText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  edge: { position: 'absolute', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, maxWidth: '45%', zIndex: 2 },
+  left: { left: 4 },
+  right: { right: 4 },
+  up: { top: 4 },
+  down: { bottom: 4 },
+  edgeText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 });

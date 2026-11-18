@@ -1,4 +1,5 @@
 import { getAccessToken } from './auth';
+import type { Folder } from './swipeMap';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 
@@ -91,14 +92,6 @@ export async function listCameraRoll(): Promise<{ rootId: string; photos: Photo[
   return { rootId: root.id, photos };
 }
 
-/** Resolves a folder by path from the drive root, e.g. "Pictures/Family". */
-export async function getFolderByPath(path: string): Promise<{ id: string; name: string }> {
-  const encoded = path.split('/').map(encodeURIComponent).join('/');
-  const item: any = await graph(`/me/drive/root:/${encoded}?$select=id,name,folder`);
-  if (!item.folder) throw new Error(`${path} is not a folder`);
-  return { id: item.id, name: item.name };
-}
-
 /**
  * Moves a single file to another folder. Fails with GraphError code
  * "nameAlreadyExists" (409) on a name clash rather than overwriting.
@@ -109,4 +102,41 @@ export async function moveItem(itemId: string, targetFolderId: string, cameraRol
     method: 'PATCH',
     body: JSON.stringify({ parentReference: { id: targetFolderId } }),
   });
+}
+
+const ROOT_PREFIX = /^\/drive\/root:\/?/;
+
+function toFolder(item: any): Folder {
+  const parent = decodeURIComponent((item.parentReference?.path ?? '').replace(ROOT_PREFIX, ''));
+  return { id: item.id, name: item.name, path: parent ? `${parent}/${item.name}` : item.name };
+}
+
+/** The Pictures folder (special folder alias, so it works whatever its display name). */
+export async function getPicturesFolder(): Promise<Folder> {
+  return toFolder(await graph('/me/drive/special/photos?$select=id,name,parentReference'));
+}
+
+/** Child folders of a folder, sorted by name. */
+export async function listChildFolders(folderId: string): Promise<Folder[]> {
+  const folders: Folder[] = [];
+  let next: string | undefined = `/me/drive/items/${folderId}/children?$select=id,name,folder,parentReference&$top=200`;
+  while (next) {
+    const page: any = await graph(next);
+    for (const item of page.value) if (item.folder) folders.push(toFolder(item));
+    next = page['@odata.nextLink'];
+  }
+  return folders.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Folders under Pictures whose name matches the query. */
+export async function searchFolders(query: string, picturesPath: string): Promise<Folder[]> {
+  const q = query.replace(/'/g, "''");
+  const page: any = await graph(
+    `/me/drive/root/search(q='${encodeURIComponent(q)}')?$select=id,name,folder,parentReference&$top=100`,
+  );
+  const needle = query.toLowerCase();
+  return page.value
+    .filter((i: any) => i.folder && i.name.toLowerCase().includes(needle))
+    .map(toFolder)
+    .filter((f: Folder) => f.path.startsWith(picturesPath + '/'));
 }

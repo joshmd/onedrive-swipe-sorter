@@ -1,13 +1,14 @@
 import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { redirectUri, signOut, useMicrosoftSignIn } from './src/auth';
 import { clearClientId, getClientId, isValidClientId, setClientId } from './src/settings';
-import { TARGET_FOLDER_PATH } from './src/config';
-import { getFolderByPath, GraphError, listCameraRoll, moveItem, type Photo } from './src/graph';
+import { GraphError, listCameraRoll, moveItem, type Photo } from './src/graph';
+import { SettingsScreen } from './src/SettingsScreen';
+import { DIRECTIONS, loadSwipeMap, saveSwipeMap, type Direction, type Folder, type SwipeMap } from './src/swipeMap';
 import { SwipeCard } from './src/SwipeCard';
 
 export default function App() {
@@ -103,26 +104,40 @@ function SignedInGate({ clientId, onReset }: { clientId: string; onReset: () => 
   return <Sorter onSignOut={auth.signOut} />;
 }
 
+type UndoEntry = {
+  id: number;
+  photo: Photo;
+  kind: 'move' | 'skip';
+  /** Resolves true once the move has succeeded on the server. */
+  done: Promise<boolean>;
+};
+
+const UNDO_LIMIT = 10;
+
 function Sorter({ onSignOut }: { onSignOut: () => void }) {
   const [rootId, setRootId] = useState<string>('');
   const [queue, setQueue] = useState<Photo[]>([]);
-  const [total, setTotal] = useState(0);
-  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
+  const [map, setMap] = useState<SwipeMap | null>(null);
+  const [history, setHistory] = useState<UndoEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [moved, setMoved] = useState(0);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
+  const nextId = useRef(1);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [roll, folder] = await Promise.all([listCameraRoll(), getFolderByPath(TARGET_FOLDER_PATH)]);
+      const [roll, saved] = await Promise.all([listCameraRoll(), loadSwipeMap()]);
       setRootId(roll.rootId);
       setQueue(roll.photos);
-      setTotal(roll.photos.length);
-      setTarget(folder);
+      setMap(saved);
+      setHistory([]);
     } catch (e) {
-      setError(e instanceof GraphError && e.status === 404 ? `Folder not found: ${TARGET_FOLDER_PATH}` : String(e));
+      setError(String(e));
     } finally {
       setLoading(false);
     }
@@ -132,35 +147,123 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
     load();
   }, [load]);
 
-  const current = queue[0];
+  const record = (entry: UndoEntry) => setHistory((h) => [...h, entry].slice(-UNDO_LIMIT));
 
-  const onSwipeRight = useCallback(async () => {
-    if (!current || !target) return;
-    setQueue((q) => q.slice(1));
-    try {
-      await moveItem(current.id, target.id, rootId);
-      setMoved((m) => m + 1);
-    } catch (e) {
-      // Put it back at the front so nothing silently disappears from the queue.
-      setQueue((q) => [current, ...q]);
-      setError(
-        e instanceof GraphError && e.code === 'nameAlreadyExists'
-          ? `${current.name} already exists in ${target.name}. Not moved.`
-          : `Move failed: ${String(e)}`,
+  const skip = useCallback(() => {
+    const [photo, ...rest] = queueRef.current;
+    if (!photo) return;
+    // Skipped photos go to the back of this session's queue.
+    setQueue([...rest, photo]);
+    record({ id: nextId.current++, photo, kind: 'skip', done: Promise.resolve(true) });
+  }, []);
+
+  const move = useCallback(
+    (folder: Folder) => {
+      const [photo, ...rest] = queueRef.current;
+      if (!photo) return;
+      setQueue(rest);
+      const id = nextId.current++;
+      const done = moveItem(photo.id, folder.id, rootId).then(
+        () => {
+          setMoved((m) => m + 1);
+          return true;
+        },
+        (e) => {
+          // Put it back at the front so nothing silently disappears from the queue.
+          setQueue((q) => [photo, ...q]);
+          setHistory((h) => h.filter((x) => x.id !== id));
+          setError(
+            e instanceof GraphError && e.code === 'nameAlreadyExists'
+              ? `${photo.name} already exists in ${folder.name}. Not moved.`
+              : `Move failed: ${String(e)}`,
+          );
+          return false;
+        },
       );
-    }
-  }, [current, target, rootId]);
+      record({ id, photo, kind: 'move', done });
+    },
+    [rootId],
+  );
 
-  if (loading) return <Centre><ActivityIndicator color="#fff" /><Text style={styles.dim}>Scanning Camera Roll…</Text></Centre>;
+  const onSwipe = useCallback(
+    (dir: Direction) => {
+      const action = map?.[dir];
+      if (action?.type === 'move') move(action.folder);
+      else if (action?.type === 'skip') skip();
+    },
+    [map, move, skip],
+  );
+
+  const undoBusy = useRef(false);
+  const undo = useCallback(async () => {
+    const entry = history[history.length - 1];
+    if (!entry || undoBusy.current) return;
+    undoBusy.current = true;
+    setHistory((h) => h.slice(0, -1));
+    try {
+      await undoEntry(entry);
+    } finally {
+      undoBusy.current = false;
+    }
+  }, [history, rootId]);
+
+  const undoEntry = async (entry: UndoEntry) => {
+    if (entry.kind === 'skip') {
+      setQueue((q) => {
+        const i = q.lastIndexOf(entry.photo);
+        const without = i >= 0 ? [...q.slice(0, i), ...q.slice(i + 1)] : q;
+        return [entry.photo, ...without];
+      });
+      return;
+    }
+    // Wait for the original move to finish, then move the file back to where it came from.
+    if (!(await entry.done)) return;
+    try {
+      await moveItem(entry.photo.id, entry.photo.parentId, rootId);
+      setMoved((m) => m - 1);
+      setQueue((q) => [entry.photo, ...q]);
+    } catch (e) {
+      setError(`Undo failed: ${String(e)}`);
+    }
+  };
+
+  const changeMap = useCallback((m: SwipeMap) => {
+    setMap(m);
+    saveSwipeMap(m).catch((e) => setError(`Could not save settings: ${String(e)}`));
+  }, []);
+
+  if (loading || !map)
+    return (
+      <Centre>
+        <ActivityIndicator color="#fff" />
+        <Text style={styles.dim}>Scanning Camera Roll…</Text>
+        {error && <Text style={styles.error}>{error}</Text>}
+        {error && <Button label="Retry" onPress={load} />}
+      </Centre>
+    );
+
+  if (settingsOpen)
+    return (
+      <SettingsScreen
+        map={map}
+        excludeId={rootId}
+        onChange={changeMap}
+        onClose={() => setSettingsOpen(false)}
+        onSignOut={onSignOut}
+      />
+    );
+
+  const current = queue[0];
+  const nothingMapped = DIRECTIONS.every((d) => map[d].type !== 'move');
 
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.header}>
         <Text style={styles.headerText}>
-          Camera Roll · {Math.min(total - queue.length + 1, total)} of {total}
+          Camera Roll · {queue.length} left · {moved} moved
         </Text>
-        <Pressable onPress={onSignOut}>
-          <Text style={styles.dim}>Sign out</Text>
+        <Pressable onPress={() => setSettingsOpen(true)} hitSlop={12}>
+          <Text style={styles.gear}>⚙</Text>
         </Pressable>
       </View>
       {error && (
@@ -168,12 +271,17 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
           <Text style={styles.error}>{error} (tap to dismiss)</Text>
         </Pressable>
       )}
+      {nothingMapped && (
+        <Pressable onPress={() => setSettingsOpen(true)}>
+          <Text style={styles.hint}>No folders set yet. Tap here to choose a folder for each swipe direction.</Text>
+        </Pressable>
+      )}
       {current ? (
         <>
-          <SwipeCard key={current.id} photo={current} targetLabel={target?.name ?? '…'} onSwipeRight={onSwipeRight} />
+          <SwipeCard key={`${current.id}:${nextId.current}`} photo={current} map={map} onSwipe={onSwipe} />
           <Text style={styles.footer}>
             {current.takenAt ? new Date(current.takenAt).toLocaleDateString() : current.name} ·{' '}
-            {(current.size / 1_048_576).toFixed(1)} MB · swipe right → {target?.name}
+            {(current.size / 1_048_576).toFixed(1)} MB
           </Text>
         </>
       ) : (
@@ -183,6 +291,10 @@ function Sorter({ onSignOut }: { onSignOut: () => void }) {
           <Button label="Rescan" onPress={load} />
         </Centre>
       )}
+      <View style={styles.toolbar}>
+        <Button label="↶ Undo" onPress={undo} disabled={history.length === 0} />
+        <Button label="Skip ⏭" onPress={skip} disabled={!current} />
+      </View>
     </View>
   );
 }
@@ -208,7 +320,10 @@ const styles = StyleSheet.create({
   error: { color: '#ff8a80', textAlign: 'center', padding: 8 },
   header: { flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
   headerText: { color: '#fff', fontWeight: '600' },
-  footer: { color: '#bbb', textAlign: 'center', padding: 16 },
+  footer: { color: '#bbb', textAlign: 'center', paddingTop: 8 },
+  toolbar: { flexDirection: 'row', justifyContent: 'center', gap: 16, padding: 16 },
+  gear: { color: '#fff', fontSize: 22 },
+  hint: { color: '#4fc3f7', textAlign: 'center', paddingHorizontal: 16, paddingBottom: 4 },
   button: { backgroundColor: '#0078d4', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 },
   buttonText: { color: '#fff', fontWeight: '600' },
 });

@@ -1,19 +1,23 @@
-# OneDrive Swipe Sorter (Phase 1 spike)
+# OneDrive Swipe Sorter
 
-Swipe through your OneDrive Camera Roll and file photos into folders. This is the Phase 1 spike from the feasibility brief. It signs in, lists Camera Roll (loose files plus Year > Month subfolders), shows one thumbnail at a time, and moves the photo to one hard-coded folder when you swipe right. Any other swipe springs back.
+Swipe through your OneDrive Camera Roll and file photos into folders. It scans Camera Roll (loose files plus Year > Month subfolders) and shows one photo at a time.
+
+- **Four-way swipe map.** In settings (⚙), set each direction to *move to a folder*, *skip*, or *nothing*. Folders are picked by browsing or searching under Pictures. Camera Roll is never offered.
+- **Undo** reverses the last 10 actions. A move is undone by moving the file back to where it came from.
+- **Skip** (button, or a swipe set to skip) sends the photo to the back of this session's queue.
 
 No backend. The client ID and tokens stay on the device in SecureStore. Photos only pass between the phone and Microsoft.
 
 ## One-off setup
 
-1. **Do Phase 0 first.** In Graph Explorer, move one test photo out of Camera Roll and delete another. Check the next day that neither came back.
+1. **Check for re-uploads first.** On the OneDrive website, move one test photo out of Camera Roll and delete another. Check the next day that neither came back.
 2. **Entra app registration** (in your free Entra tenant):
    - Supported account types: *Personal Microsoft accounts only*.
    - Platform: *Mobile and desktop applications*, redirect URI `swipesorter://auth`.
    - API permissions: Microsoft Graph, delegated: `Files.ReadWrite`, `User.Read`, `offline_access`.
    - No client secret is needed. *Allow public client flows* can stay off.
 3. Copy the Application (client) ID. You paste it into the app on first launch. It is stored in SecureStore on the phone and never goes into the repo. "Change app registration" on the sign-in screen clears it, along with the saved sign-in.
-4. Create the test folder in OneDrive: `Pictures/Swipe Sorter Test` (or change `TARGET_FOLDER_PATH`).
+4. Make sure your destination folders exist under Pictures. The app picks from existing folders and doesn't create new ones.
 
 ## Run on the Pixel
 
@@ -48,6 +52,6 @@ npx expo export --platform android   # confirms the JS bundle builds
 
 Sort 100 real photos with no wrong moves, and see no re-uploads into Camera Roll the next day.
 
-## Next (Phase 2)
+## Next
 
-Configurable four-way swipe map, pinned/recent/search folder picker under Pictures, a 10-step undo stack, delta sync, and a rename rule for clashes.
+Pinned and recent folders in the picker, delta sync, a rename rule for name clashes, delete with recycle-bin restore, reminders and a session summary.
