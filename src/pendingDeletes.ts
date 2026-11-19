@@ -1,22 +1,31 @@
 import * as SecureStore from 'expo-secure-store';
-import { deleteItem } from './graph';
+import { deleteItem, GraphError } from './graph';
 
 /**
  * Deletes are held back until they can no longer be undone (they fall off the
- * undo stack, the app goes to the background, or the queue is rescanned).
+ * undo stack, the app goes to the background, or Camera Roll is rescanned).
  * Undo then only has to cancel, so the app never needs the broader
  * Files.ReadWrite.All permission that recycle-bin restore requires.
  *
  * The pending list is saved so a killed app finishes the job on next launch.
+ * An item that fails MAX_ATTEMPTS times for a reason other than a network
+ * error is dropped from the list and left where it is.
  */
-const KEY = 'pending_deletes_v1';
+const KEY = 'pending_deletes_v2';
+const OLD_KEY = 'pending_deletes_v1';
+const MAX_ATTEMPTS = 3;
 
-let pending: string[] | null = null;
+type Pending = { id: string; name: string; attempts: number };
 
-async function load(): Promise<string[]> {
+let pending: Pending[] | null = null;
+
+async function load(): Promise<Pending[]> {
   if (pending) return pending;
   try {
     pending = JSON.parse((await SecureStore.getItemAsync(KEY)) ?? '[]');
+    const old: string[] = JSON.parse((await SecureStore.getItemAsync(OLD_KEY)) ?? '[]');
+    for (const id of old) if (!pending!.some((p) => p.id === id)) pending!.push({ id, name: 'photo', attempts: 0 });
+    if (old.length) await SecureStore.deleteItemAsync(OLD_KEY);
   } catch {
     pending = [];
   }
@@ -28,35 +37,55 @@ async function save() {
 }
 
 export async function getPendingDeletes(): Promise<Set<string>> {
-  return new Set(await load());
+  return new Set((await load()).map((p) => p.id));
 }
 
-export async function addPendingDelete(id: string) {
+export async function addPendingDelete(id: string, name: string) {
   const list = await load();
-  if (!list.includes(id)) list.push(id);
+  if (!list.some((p) => p.id === id)) list.push({ id, name, attempts: 0 });
   await save();
 }
 
 export async function cancelPendingDelete(id: string) {
-  pending = (await load()).filter((x) => x !== id);
+  pending = (await load()).filter((p) => p.id !== id);
   await save();
 }
 
-/** Sends one pending delete to OneDrive (recycle bin). Stays pending if it fails. */
-export async function commitDelete(id: string, cameraRollId: string) {
-  await deleteItem(id, cameraRollId);
-  await cancelPendingDelete(id);
-}
+export type FlushResult = {
+  /** Failed and still pending. */
+  failed: number;
+  /** Of those, how many failed for a reason other than no network. */
+  otherFailed: number;
+  /** Names of photos dropped after MAX_ATTEMPTS. They stay in OneDrive. */
+  gaveUp: string[];
+  firstError?: string;
+};
 
-/** Sends every pending delete. Returns how many failed (they stay pending for next time). */
-export async function flushPendingDeletes(cameraRollId: string): Promise<number> {
-  let failed = 0;
-  for (const id of [...(await load())]) {
+const isNetworkError = (e: unknown) => !(e instanceof GraphError);
+
+/**
+ * Sends pending deletes (all, or just the given IDs) to OneDrive.
+ * Failures stay pending for next time, up to MAX_ATTEMPTS.
+ */
+export async function flushPendingDeletes(cameraRollId: string, onlyIds?: string[]): Promise<FlushResult> {
+  const result: FlushResult = { failed: 0, otherFailed: 0, gaveUp: [] };
+  for (const p of [...(await load())]) {
+    if (onlyIds && !onlyIds.includes(p.id)) continue;
     try {
-      await commitDelete(id, cameraRollId);
-    } catch {
-      failed++;
+      await deleteItem(p.id, cameraRollId);
+      pending = pending!.filter((x) => x.id !== p.id);
+    } catch (e) {
+      result.firstError ??= String(e);
+      const network = isNetworkError(e);
+      if (!network && ++p.attempts >= MAX_ATTEMPTS) {
+        pending = pending!.filter((x) => x.id !== p.id);
+        result.gaveUp.push(p.name);
+      } else {
+        result.failed++;
+        if (!network) result.otherFailed++;
+      }
     }
   }
-  return failed;
+  await save();
+  return result;
 }

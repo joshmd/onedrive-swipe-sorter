@@ -4,8 +4,11 @@ Swipe through your OneDrive Camera Roll and file photos into folders. It scans C
 
 - **Four-way swipe map.** In settings (⚙), set each direction to *move to a folder*, *skip*, *delete* or *nothing*. Folders are picked by browsing or searching under Pictures. Camera Roll is never offered.
 - **Undo** reverses the last 10 actions. A move is undone by moving the file back to where it came from.
-- **Skip** (button, or a swipe set to skip) sends the photo to the back of this session's queue.
-- **Delete** sends the file to the OneDrive recycle bin, but only once it can't be undone any more: when it drops off the undo list, when the app goes to the background, on rescan or on sign-out. Undo just cancels it, so the app never needs `Files.ReadWrite.All`, which recycle-bin restore would require. Pending deletes are saved on the phone and finished at next launch if the app was killed.
+- **Skip** (button, or a swipe set to skip) sends the photo to the back of the queue.
+- **Grid view** (▦): thumbnails of the whole queue with − / + zoom and a month label as you scroll. Tap a photo to carry on sorting from there.
+- **Order**: oldest or newest first, by date taken (file date if there isn't one). Undated photos go last.
+- **No rescan on reopen.** The queue is saved on the phone as you sort, and reused if Camera Roll was scanned in the last 6 hours. Settings shows when it was last scanned and has **Rescan now**.
+- **Delete** sends the file to the OneDrive recycle bin, but only once it can't be undone any more: when it drops off the undo list, when the app goes to the background, on rescan or on sign-out. Undo just cancels it, so the app never needs `Files.ReadWrite.All`, which recycle-bin restore would require. Pending deletes are saved on the phone and finished at next launch if the app was killed. Network failures are retried quietly. Anything else is retried up to 3 times, then the photo is left in Camera Roll and named in an error.
 
 No backend. The client ID and tokens stay on the device in SecureStore. Photos only pass between the phone and Microsoft.
 
@@ -63,4 +66,4 @@ Sort 100 real photos with no wrong moves, and see no re-uploads into Camera Roll
 
 ## Next
 
-Pinned and recent folders in the picker, delta sync, a rename rule for name clashes, reminders and a session summary.
+Pinned and recent folders in the picker, delta sync (so new uploads appear without a full rescan), pinch-to-zoom in the grid, a rename rule for name clashes, reminders and a session summary.

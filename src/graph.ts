@@ -9,9 +9,15 @@ export type Photo = {
   size: number;
   parentId: string;
   takenAt?: string;
+  /** Date used for ordering: date taken, else the file's created date. */
+  sortDate: string;
   isVideo: boolean;
   thumbnailUrl?: string;
+  /** Smaller thumbnail for the grid view. */
+  gridThumbUrl?: string;
 };
+
+export type SortOrder = 'oldest' | 'newest';
 
 export class GraphError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -36,16 +42,18 @@ export async function graph<T = any>(pathOrUrl: string, init: RequestInit = {}, 
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new GraphError(res.status, body?.error?.code ?? 'unknown', body?.error?.message ?? res.statusText);
+    const code = body?.error?.code ?? 'unknown';
+    throw new GraphError(res.status, code, `${body?.error?.message ?? res.statusText} (${res.status} ${code})`);
   }
   return res.status === 204 ? (undefined as T) : res.json();
 }
 
-const SELECT = 'id,name,size,file,folder,photo,video,parentReference';
+const SELECT = 'id,name,size,file,folder,photo,video,parentReference,createdDateTime,fileSystemInfo';
+const THUMBS = 'thumbnails($select=medium,large)';
 
 async function listChildren(itemPath: string): Promise<any[]> {
   const items: any[] = [];
-  let next: string | undefined = `${itemPath}/children?$select=${SELECT}&$expand=thumbnails($select=large)&$top=200`;
+  let next: string | undefined = `${itemPath}/children?$select=${SELECT}&$expand=${THUMBS}&$top=200`;
   while (next) {
     const page: any = await graph(next);
     items.push(...page.value);
@@ -64,8 +72,10 @@ function toPhoto(item: any): Photo | null {
     size: item.size,
     parentId: item.parentReference?.id,
     takenAt: item.photo?.takenDateTime,
+    sortDate: item.photo?.takenDateTime ?? item.fileSystemInfo?.createdDateTime ?? item.createdDateTime ?? '',
     isVideo,
     thumbnailUrl: item.thumbnails?.[0]?.large?.url,
+    gridThumbUrl: item.thumbnails?.[0]?.medium?.url,
   };
 }
 
@@ -87,8 +97,6 @@ export async function listCameraRoll(): Promise<{ rootId: string; photos: Photo[
     }
   };
   await walk(`/me/drive/items/${root.id}`);
-  // Oldest first, so sorting works through the backlog in order.
-  photos.sort((a, b) => (a.takenAt ?? '').localeCompare(b.takenAt ?? ''));
   return { rootId: root.id, photos };
 }
 
@@ -151,6 +159,32 @@ export async function deleteItem(itemId: string, cameraRollId: string): Promise<
     await graph(`/me/drive/items/${itemId}`, { method: 'DELETE' });
   } catch (e) {
     if (e instanceof GraphError && e.status === 404) return;
+    throw e;
+  }
+}
+
+/** Sorts by date taken (falling back to created date). Photos with no date at all go last. */
+export function sortPhotos(photos: Photo[], order: SortOrder): Photo[] {
+  const dir = order === 'oldest' ? 1 : -1;
+  return [...photos].sort((a, b) => {
+    if (!a.sortDate || !b.sortDate) return a.sortDate ? -1 : b.sortDate ? 1 : 0;
+    return a.sortDate.localeCompare(b.sortDate) * dir;
+  });
+}
+
+/** Fresh thumbnail URLs for one item, for when a cached URL has expired. */
+export async function getThumbnails(itemId: string): Promise<{ large?: string; medium?: string }> {
+  const res: any = await graph(`/me/drive/items/${itemId}/thumbnails?$select=medium,large`);
+  return { large: res.value?.[0]?.large?.url, medium: res.value?.[0]?.medium?.url };
+}
+
+/** True if the item still exists (not deleted). */
+export async function itemExists(itemId: string): Promise<boolean> {
+  try {
+    await graph(`/me/drive/items/${itemId}?$select=id`);
+    return true;
+  } catch (e) {
+    if (e instanceof GraphError && e.status === 404) return false;
     throw e;
   }
 }

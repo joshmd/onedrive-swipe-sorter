@@ -17,13 +17,15 @@ type Props = {
   map: SwipeMap;
   /** Called after the card has flown off in that direction. */
   onSwipe: (direction: Direction) => void;
+  /** Called if the thumbnail fails to load (e.g. an expired URL). */
+  onImageError?: () => void;
 };
 
 /**
  * Four-way swipe. A direction mapped to "nothing" springs back.
  * The label on the edge you drag towards grows as you approach the threshold.
  */
-export function SwipeCard({ photo, map, onSwipe }: Props) {
+export function SwipeCard({ photo, map, onSwipe, onImageError }: Props) {
   const { width, height } = useWindowDimensions();
   const hThreshold = width * 0.3;
   const vThreshold = height * 0.18;
@@ -105,7 +107,7 @@ export function SwipeCard({ photo, map, onSwipe }: Props) {
       <GestureDetector gesture={pan}>
         <Animated.View style={[styles.card, cardStyle]}>
           {photo.thumbnailUrl ? (
-            <Image source={{ uri: photo.thumbnailUrl }} style={styles.img} contentFit="contain" />
+            <Image source={{ uri: photo.thumbnailUrl }} style={styles.img} contentFit="contain" onError={onImageError} />
           ) : (
             <Text style={styles.noThumb}>No thumbnail</Text>
           )}

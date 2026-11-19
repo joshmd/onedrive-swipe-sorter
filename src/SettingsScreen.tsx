@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FolderPicker } from './FolderPicker';
+import type { SortOrder } from './graph';
 import { COLOURS, DIRECTIONS, type Direction, type SwipeAction, type SwipeMap } from './swipeMap';
 
 type Props = {
   map: SwipeMap;
+  order: SortOrder;
+  onOrderChange: (order: SortOrder) => void;
+  scannedAt: number;
+  onRescan: () => void;
   excludeId?: string;
   onChange: (map: SwipeMap) => void;
   onClose: () => void;
@@ -20,7 +25,7 @@ function describe(a: SwipeAction): string {
   return 'Nothing';
 }
 
-export function SettingsScreen({ map, excludeId, onChange, onClose, onSignOut }: Props) {
+export function SettingsScreen({ map, order, onOrderChange, scannedAt, onRescan, excludeId, onChange, onClose, onSignOut }: Props) {
   const [picking, setPicking] = useState<Direction | null>(null);
 
   if (picking)
@@ -57,12 +62,36 @@ export function SettingsScreen({ map, excludeId, onChange, onClose, onSignOut }:
           </View>
         </View>
       ))}
+      <View style={styles.card}>
+        <Text style={styles.dir}>Order</Text>
+        <Text style={styles.current}>By date taken (or file date if there isn't one). Undated photos go last.</Text>
+        <View style={styles.choices}>
+          <Chip label="Oldest first" onPress={() => onOrderChange('oldest')} selected={order === 'oldest'} />
+          <Chip label="Newest first" onPress={() => onOrderChange('newest')} selected={order === 'newest'} />
+        </View>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.dir}>Camera Roll</Text>
+        <Text style={styles.current}>Last scanned {ago(scannedAt)}. Rescans automatically after 6 hours.</Text>
+        <View style={styles.choices}>
+          <Chip label="Rescan now" onPress={onRescan} selected={false} />
+        </View>
+      </View>
       <Text style={styles.note}>Folders are under Pictures. Camera Roll is never offered as a destination. Deletes are sent once they drop off the undo list or you leave the app, and go to the OneDrive recycle bin.</Text>
       <Pressable onPress={onSignOut} style={{ marginTop: 24 }}>
         <Text style={styles.dim}>Sign out</Text>
       </Pressable>
     </ScrollView>
   );
+}
+
+function ago(t: number): string {
+  if (!t) return 'never';
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.round(mins / 60);
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
 }
 
 const Chip = ({ label, onPress, selected }: { label: string; onPress: () => void; selected: boolean }) => (
