@@ -77,7 +77,11 @@ export function SwipeCard({ photo, map, onSwipe }: Props) {
     ],
   }));
 
-  const grow = (p: number) => ({ opacity: 0.25 + p * 0.75, transform: [{ scale: 0.85 + p * 0.45 }] });
+  // Called from useAnimatedStyle on the UI thread, so it must be a worklet too.
+  const grow = (p: number) => {
+    'worklet';
+    return { opacity: 0.25 + p * 0.75, transform: [{ scale: 0.85 + p * 0.45 }] };
+  };
   const rightStyle = useAnimatedStyle(() => grow(interpolate(x.value, [0, hThreshold], [0, 1], 'clamp')));
   const leftStyle = useAnimatedStyle(() => grow(interpolate(x.value, [-hThreshold, 0], [1, 0], 'clamp')));
   const downStyle = useAnimatedStyle(() => grow(interpolate(y.value, [0, vThreshold], [0, 1], 'clamp')));
